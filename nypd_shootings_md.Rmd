@@ -1,0 +1,207 @@
+---
+title: "nypd_shootings"
+author: "R.Barr"
+date: "2024-07-20"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## NYPD Shooting Incidents
+
+Data retrieved from NYPD records at: https://data.cityofnewyork.us 
+This data is gathered by the NYPD on crime (shootings) in specific boroughs 
+from 2005-2023. 
+
+### Import data & R Libraries
+```{r, echo=TRUE}
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(ggcorrplot)
+
+data_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+NYPD_raw <- read.csv(data_url)
+
+#### Quick summary of the data set
+
+summary(NYPD_raw)
+
+```
+Here we see that some of the measures need to be converted to their proper data types in order to continue the analysis. We convert OCCUR_DATE to date, OCCUR_TIME to time, PRECINT to character because the precincts as integers offer no mathematical analysis, and a few others. We find out if there is missing values and figure out the best way to deal with those. We also check for uniformity in the data. 
+
+### Tidy and transform data
+```{r}
+
+
+NYPD_data <- NYPD_raw %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE), OCCUR_TIME = as_hms(OCCUR_TIME), PRECINCT = as.factor(PRECINCT), PERP_AGE_GROUP = as.factor(PERP_AGE_GROUP), PERP_RACE= as.factor(PERP_RACE), PERP_SEX= as.factor(PERP_SEX),VIC_AGE_GROUP = as.factor(VIC_AGE_GROUP), VIC_RACE= as.factor(VIC_RACE), VIC_SEX= as.factor(VIC_SEX), BORO= as.factor(BORO))
+
+#We won't be using all the columns so we filter to only the ones we are interested in. 
+
+NYPD_data <- NYPD_data  %>% select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, JURISDICTION_CODE, LOC_CLASSFCTN_DESC,LOC_OF_OCCUR_DESC,INCIDENT_KEY)) 
+
+#making sure the data types have been converted.
+count(NYPD_data, PERP_AGE_GROUP)
+summary(NYPD_data)
+
+```
+
+### Uniformity in data 
+
+Now we have to figure out what to do with null values and change some entries if they are not what they should be. Make sure there are misspelled entries that will disqualify or create a problem when analyzing & visualizing the data.
+
+```{r}
+# Since there are some NAs we get rid of them since they are not of use in this state. 
+
+which(is.na(NYPD_data$BORO))
+
+NYPD_data <- NYPD_data[ !(NYPD_data$PERP_AGE_GROUP %in% c("1020","940","(null)","224","1028","","UNKNOWN")),]
+NYPD_data <- NYPD_data[ !(NYPD_data$PERP_RACE %in% c("UNKNOWN","(Other)")),]
+NYPD_data <- NYPD_data[ !(NYPD_data$PERP_SEX %in% c("(null)","","U")),]
+NYPD_data <- NYPD_data[ !(NYPD_data$VIC_AGE_GROUP %in% c("UNKNOWN","1022")),]
+NYPD_data <- NYPD_data[ !(NYPD_data$VIC_SEX %in% c("U")),]
+NYPD_data <- NYPD_data[ !(NYPD_data$VIC_RACE %in% c("UNKNOWN")),]
+
+
+# Check to make sure there is no unwanted data.
+count(NYPD_data, PERP_AGE_GROUP)
+count(NYPD_data, PERP_SEX)
+count(NYPD_data, PERP_RACE)
+count(NYPD_data, VIC_AGE_GROUP)
+count(NYPD_data, VIC_SEX)
+count(NYPD_data, VIC_RACE)
+
+summary(NYPD_data)
+
+```
+### Guiding Question
+
+It would be interesting to find out which Borough has the most crimes and also their seasonal 
+trends. Maybe also helpful to see perpetrator and victim 
+demographics during specific times of the year or year by year. Is there a high correlation between age, race,
+borough, and sex for crimes committed in NY? 
+
+
+### Analysis & Visualization
+  
+  I will be looking into crimes committed on a yearly basis by borough. Then break it down by perp & victim age groups.
+
+## Plots
+
+```{r, echo=TRUE}
+
+NYPD_perp_data <- NYPD_data %>% mutate(crime = 1) %>% select(OCCUR_DATE,BORO, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, crime)
+
+NYPD_vic_data <- NYPD_data %>% mutate(crime = 1) %>% select(OCCUR_DATE,BORO, VIC_AGE_GROUP, PERP_SEX, PERP_RACE, crime)
+
+# Grouping the data by year and Borough
+crime_by_year_borough <- NYPD_perp_data %>% 
+    group_by(year = lubridate::floor_date(OCCUR_DATE, "year"), BORO) %>% summarize(total_crimes = sum(crime)) %>% select(BORO,total_crimes) 
+
+crime_by_year_borough
+
+# The plot 
+borough_by_year <- crime_by_year_borough %>%
+  ggplot(aes(x=year, y=total_crimes, color= BORO)) + 
+  geom_bar(stat='identity' ,aes(fill=BORO) ,width=250) +
+  facet_wrap(.~BORO)+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle= 90)) +
+  labs(title = str_c("New York crime by borough"), y = NULL)
+  
+# Grouping the data by year, Borough, and Perp age group
+crime_by_perp_age_group <- NYPD_perp_data %>% 
+      group_by(year = lubridate::floor_date(OCCUR_DATE, "year"), BORO ,PERP_AGE_GROUP,crime) %>% summarize(total_crimes= sum(crime)) %>% select( BORO,PERP_AGE_GROUP, total_crimes)
+
+crime_by_perp_age_group
+
+#the plot
+perp_age_group_year_boro <- crime_by_perp_age_group %>%
+  ggplot(aes(x=year, y=total_crimes, color= PERP_AGE_GROUP)) + 
+  geom_bar(stat='identity' ,aes(fill=PERP_AGE_GROUP), width= 250 ) +
+  facet_wrap(.~BORO)+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle= 90)) +
+  labs(title = str_c("New York crime by AGE group"), x = "Year", y = "Shootings")
+
+
+# Grouping the data by year, Borough, and Victim age group
+crime_by_vic_age_group <- NYPD_vic_data %>% 
+      group_by(year = lubridate::floor_date(OCCUR_DATE, "year"), BORO ,VIC_AGE_GROUP, crime) %>% summarize(total_crimes= sum(crime)) %>% select( BORO,VIC_AGE_GROUP, total_crimes)
+
+crime_by_vic_age_group
+
+#The plot 
+vic_age_group_year_boro <- crime_by_vic_age_group %>%
+  ggplot(aes(x=year, y=total_crimes, color= VIC_AGE_GROUP)) + 
+  geom_bar(stat='identity' ,aes(fill=VIC_AGE_GROUP), width= 250 ) +
+  facet_wrap(.~BORO)+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle= 90)) +
+  labs(title = str_c("New York crime by Victim age group"), x = "Year", y = "Shootings")
+
+#Then we call the function plot
+#This is the plot of the overall shootings in NY by Borough each year
+  plot(borough_by_year)
+#This is the plot of the shootings in NY by borough each year by perp age group
+  plot(perp_age_group_year_boro)
+#This is the plot of the shootings in NY by borough each year by vic age group
+  plot(vic_age_group_year_boro)
+
+
+```
+
+#### Model
+
+ The data will be going through a Regression Linear Model and looking at a correlation matrix.
+
+```{r}
+#Lets create a linear regression model to predict outcomes. 
+#Convert categorical variables to numeric. 
+
+NYPD_perp_df <- data.frame(NYPD_perp_data)
+NYPD_perp_df_1 <- data.frame(crime_by_perp_age_group)
+
+#Change date to numeric in order to include this variable in a linear regression model.
+NYPD_perp_df_1$year <- as.numeric(NYPD_perp_df_1$year)
+
+#We change the factors into numeric
+nypd_perp_df <- NYPD_perp_df_1  %>% mutate_if(is.factor, as.numeric)
+
+crime_reg<- lm(total_crimes ~ PERP_AGE_GROUP + BORO + year, data= nypd_perp_df )
+
+summary(crime_reg)
+crime_residuals <- crime_reg$residuals
+
+# The qqplot of crime residuals
+qqnorm(crime_residuals)
+qqline(crime_residuals)
+
+#Histogram of crime residuals
+hist(crime_reg$residuals)
+
+#Correlation matrix
+nypd_perp_corr <- round(cor(nypd_perp_df),2)
+
+nypd_perp_corr
+
+```
+
+
+### Conclusion
+   This goes to show that more crime is committed in the Bronx and Brooklyn areas over a time period of 2005-2023. However, places like Brooklyn seem to be experiencing reduced number of shootings the last 2-3 years as compared to Brooklyn from 2005-2015. Meanwhile, Manhattan seems to be experiencing an increase over the last 3 years and places like Queens and Staten Island remain relatively unchanged. 
+   The linear regression model is a powerful model to analyse data but in this situation it seems to be lacking. 
+If we look at residuals the min and max values are too far off from each other, which means the model is still
+missing more explanatory variables or that the data is not perfectly linear and a different model might be more 
+appropriate. 
+
+The correlation matrix did however have a small inversely related correlation of -0.42 which means it is a 
+somewhat strong negative correlation between Borough and total number of crimes. 
+
+#### Self Bias
+
+Not being a professional in that specific field creates limitations to the understanding of the data. Like not being quite familiar with the NY region and not understanding how police work and crime in the area 
+operate, which will mean the analysis might be lacking depth and precision. In order to truly understand the inner workings of the data it might be useful to speak with someone who is more aquainted with the area and the data collection. Sometimes the data in police reports comes from concerned citizens and there might be unique biases introduced in each individual report, there could be racism, discrimination, or simply communication barriers. Understanding the people elements to aquiring and documenting this information can help point the analysis in the right direction. 
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
